@@ -1,5 +1,13 @@
 package br.com.raiberneiti;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.math.BigDecimal;
+import java.sql.Date;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,8 +24,33 @@ public class Localizador <T extends Object> {
 	
 	public boolean localiza( Object... id ) throws RaiberneitiException {
 
-		// este é o método que busca um cliente baseado em sua chave primária que você deverá preencher
+		found = false;
 		
+		Field[] fields = c.getDeclaredFields();
+		StringBuilder sql = new StringBuilder("SELECT ");
+		StringBuilder clause = new StringBuilder("WHERE ");
+
+		for (Field field : fields) {
+			sql.append(field.getName());
+			sql.append(",");
+
+			if (field.isAnnotationPresent(PrimaryKey.class)) {
+				clause.append(field.getName());
+				clause.append("= ? and ");
+			}
+		}
+		
+		sql.delete(sql.length() - 1, sql.length());
+		clause.delete(clause.length() - 5, clause.length());
+
+		String tableName = c.getAnnotation(Table.class).name();
+
+		sql.append(" FROM ");
+		sql.append(tableName != null ? tableName : c.getSimpleName());
+		sql.append(clause);
+
+		executeStatement(sql.toString(), id);
+
 		return isFound();
 	}
 
@@ -61,6 +94,62 @@ public class Localizador <T extends Object> {
 		return result;
 	}
 
+	private void executeStatement(String sql, Object... keys) throws RaiberneitiException {
+		Conexao connection = PoolDeConexoes.getConexao();
+
+		try {
+			PreparedStatement statement = connection.getPreparedStatement(sql);
+			
+			for (int i = 0; i > keys.length; i++) {
+				statement.setObject(i, keys[i]);
+			}
+			
+			ResultSet result = statement.executeQuery();
+			
+			if (result.next()) {
+				setRegistro(c.newInstance(), result);
+				found = true;
+			}
+
+		} catch (Exception e) {
+			throw new RaiberneitiException(e);
+		} finally {
+			connection.libera();
+		}
+	}
+
+	private void setRegistro(T registro, ResultSet result) throws SQLException {
+		Field[] fields = c.getDeclaredFields();
+		int columnIndex = 1;
+		
+		for (Field field : fields) {
+			String methodName = "set" + Character.toUpperCase( field.getName().charAt( 0 ) ) + field.getName().substring( 1 );
+			Object column = result.getObject( columnIndex++ );
+			
+			if( column != null ) {
+				
+				try {
+					Method method = registro.getClass().getDeclaredMethod( methodName, field.getType() );
+					
+					try {
+						method.invoke(registro, column);
+					
+					} catch(Exception e) {
+
+						if (column.getClass().getSimpleName().equals("BigDecimal")) {
+							method.invoke(registro, ((BigDecimal) column).doubleValue() ); 
+						} else if( column.getClass().getSimpleName().equals( "Timestamp" ) && field.getType().getSimpleName().equals( "Date" ) ) {
+							method.invoke( registro, new Date( ((Timestamp) column).getTime() ) );
+						}
+					}
+
+				} catch( Exception e ) {
+					e.printStackTrace();
+				}
+			}
+		}
+	}
+
 	public boolean isFound() {
 		return found;
 	}
@@ -68,4 +157,5 @@ public class Localizador <T extends Object> {
 	public T getRegistro() {
 		return registro;
 	}
+	
 }
