@@ -28,7 +28,8 @@ public class Localizador <T extends Object> {
 		
 		Field[] fields = c.getDeclaredFields();
 		StringBuilder sql = new StringBuilder("SELECT ");
-		StringBuilder clause = new StringBuilder("WHERE ");
+		StringBuilder clause = new StringBuilder(" WHERE ");
+		int keysNumber = 0;
 
 		for (Field field : fields) {
 			sql.append(field.getName());
@@ -37,7 +38,13 @@ public class Localizador <T extends Object> {
 			if (field.isAnnotationPresent(PrimaryKey.class)) {
 				clause.append(field.getName());
 				clause.append("= ? and ");
+
+				keysNumber++;
 			}
+		}
+
+		if (keysNumber != id.length) {
+			throw new RaiberneitiException("");
 		}
 		
 		sql.delete(sql.length() - 1, sql.length());
@@ -49,14 +56,48 @@ public class Localizador <T extends Object> {
 		sql.append(tableName != null ? tableName : c.getSimpleName());
 		sql.append(clause);
 
-		executeStatement(sql.toString(), id);
+		executeStatement(sql, id);
 
 		return isFound();
 	}
 
 	public boolean localizaPorAlternateKey( String alternateKeyName, Object... id ) throws RaiberneitiException {
 
-		// este é o método que busca um cliente baseado na chave alternativa indicada que você deverá preencher
+		found = false;
+		
+		Field[] fields = c.getDeclaredFields();
+		StringBuilder sql = new StringBuilder("SELECT ");
+		StringBuilder clause = new StringBuilder(" WHERE ");
+		int keysNumber = 0;
+
+		for (Field field : fields) {
+			sql.append(field.getName());
+			sql.append(",");
+
+			boolean alternateKey = field.getAnnotation(AlternateKey.class).keyName().equals(alternateKeyName);
+
+			if (alternateKey) {
+				clause.append(field.getName());
+				clause.append("= ? and ");
+
+				keysNumber++;
+			}
+		}
+
+		if (keysNumber != id.length) {
+			throw new RaiberneitiException("");
+		}
+		
+		sql.delete(sql.length() - 1, sql.length());
+		clause.delete(clause.length() - 5, clause.length());
+
+		String tableName = c.getAnnotation(Table.class).name();
+
+		sql.append(" FROM ");
+		sql.append(tableName != null ? tableName : c.getSimpleName());
+		sql.append(clause);
+
+		executeStatement(sql, id);
 
 		return isFound();
 	}
@@ -86,19 +127,113 @@ public class Localizador <T extends Object> {
 	}
 	
 	public List<T> localiza( String clausulaWhere, Object[] camposSelecao, String orderBy, Integer limit, Integer offSet ) throws RaiberneitiException {
+
+		Field[] fields = c.getDeclaredFields();
+		StringBuilder sql = new StringBuilder("SELECT ");
+
+		for (Field field : fields) {
+			ColumnAlias columnAlias = field.getAnnotation(ColumnAlias.class);
+			ColumnName columnName = field.getAnnotation(ColumnName.class);
+
+			if (columnAlias != null) {
+					sql.append(columnAlias.value());
+					sql.append(".");
+			}
+
+			sql.append(columnName != null ? columnName.value() : field.getName());
+			sql.append(",");
+		}
 		
-		ArrayList<T> result = new ArrayList<T>();
-		
-		// Este é o método que retorna um list de registros que vc deverá preencher
-		
-		return result;
+		sql.delete(sql.length() - 1, sql.length());
+
+		Table tableName = c.getAnnotation(Table.class);
+		sql.append("FROM");
+
+		if (tableName != null) {
+			sql.append(tableName.name());
+
+			if (tableName.alias().trim().length() > 0) {
+				sql.append(" ");
+				sql.append(tableName.alias());
+			}
+
+		} else {
+			sql.append(c.getSimpleName());
+		}
+
+		List<JoinRule> joins = getInclude();
+
+		if (joins != null) {
+			include(joins, sql);
+		}
+
+		if (clausulaWhere != null) {
+			String clause = clausulaWhere.trim();
+
+			if( !clause.toLowerCase().startsWith("WHERE ")) {
+				sql.append(" WHERE ");
+			}
+
+			sql.append(clause);
+		}
+
+		if (orderBy != null) {
+			sql.append(" ORDER BY ");
+			sql.append(orderBy);
+		}
+
+		if (limit != null) {
+			sql.append(" LIMIT ");
+			sql.append(limit);
+		}
+
+		if (offSet != null) {
+			sql.append(" OFFSET ");
+			sql.append(offSet);
+		}
+
+		return executeStatementLocator(sql, camposSelecao);
 	}
 
-	private void executeStatement(String sql, Object... keys) throws RaiberneitiException {
+	private List<T> executeStatementLocator(StringBuilder sql, Object[] fields) throws RaiberneitiException {
+		ArrayList<T> resultList = new ArrayList<T>();
 		Conexao connection = PoolDeConexoes.getConexao();
 
 		try {
-			PreparedStatement statement = connection.getPreparedStatement(sql);
+			PreparedStatement statement = connection.getPreparedStatement(sql.toString());
+			
+			for (int i = 0; i > fields.length; i++) {
+				statement.setObject(i, fields[i]);
+			}
+			
+			ResultSet result = statement.executeQuery();
+			
+			if (result.next()) {
+
+				while (!result.isAfterLast()) {
+					T register = c.newInstance();
+
+					setRegistro(register, result);
+					
+					resultList.add(register);
+					result.next();
+				}
+			}
+
+		} catch (Exception e) {
+			throw new RaiberneitiException(e);
+		} finally {
+			connection.libera();
+		}
+
+		return resultList;
+	}
+
+	private void executeStatement(StringBuilder sql, Object... keys) throws RaiberneitiException {
+		Conexao connection = PoolDeConexoes.getConexao();
+
+		try {
+			PreparedStatement statement = connection.getPreparedStatement(sql.toString());
 			
 			for (int i = 0; i > keys.length; i++) {
 				statement.setObject(i, keys[i]);
@@ -123,13 +258,13 @@ public class Localizador <T extends Object> {
 		int columnIndex = 1;
 		
 		for (Field field : fields) {
-			String methodName = "set" + Character.toUpperCase( field.getName().charAt( 0 ) ) + field.getName().substring( 1 );
-			Object column = result.getObject( columnIndex++ );
+			String methodName = "set" + Character.toUpperCase(field.getName().charAt(0)) + field.getName().substring(1);
+			Object column = result.getObject(columnIndex++);
 			
-			if( column != null ) {
+			if(column != null) {
 				
 				try {
-					Method method = registro.getClass().getDeclaredMethod( methodName, field.getType() );
+					Method method = registro.getClass().getDeclaredMethod(methodName, field.getType());
 					
 					try {
 						method.invoke(registro, column);
@@ -137,17 +272,60 @@ public class Localizador <T extends Object> {
 					} catch(Exception e) {
 
 						if (column.getClass().getSimpleName().equals("BigDecimal")) {
-							method.invoke(registro, ((BigDecimal) column).doubleValue() ); 
-						} else if( column.getClass().getSimpleName().equals( "Timestamp" ) && field.getType().getSimpleName().equals( "Date" ) ) {
-							method.invoke( registro, new Date( ((Timestamp) column).getTime() ) );
+							method.invoke(registro, ((BigDecimal) column).doubleValue()); 
+						} else if(column.getClass().getSimpleName().equals("Timestamp") && field.getType().getSimpleName().equals("Date")) {
+							method.invoke( registro, new Date(((Timestamp) column).getTime()));
 						}
 					}
 
-				} catch( Exception e ) {
+				} catch(Exception e) {
 					e.printStackTrace();
 				}
 			}
 		}
+	}
+	private void include(List<JoinRule> includes, StringBuilder sql) {
+		for (JoinRule include : includes) {
+			sql.append(" ");
+
+			switch (include.type()) {
+				case FULL: sql.append("FULL"); break;
+				case INNER: sql.append("INNER"); break;
+				case LEFT: sql.append("LEFT"); break;
+				case RIGHT: sql.append("RIGHT"); break;
+			}
+
+			sql.append(" JOIN ");
+			sql.append(include.tableName());
+
+			if (!include.alias().trim().equals(" ")) {
+				sql.append(" ");
+				sql.append(include.alias());
+			}
+
+			sql.append(" on ");
+			sql.append(include.condition());
+		}
+	}
+
+	private List<JoinRule> getInclude() {
+
+		List<JoinRule> includes = new ArrayList<JoinRule>();
+		JoinRule rule = c.getAnnotation(JoinRule.class);
+
+		if (rule != null) {
+			includes.add(rule);
+		}
+
+		JoinList includeList = c.getAnnotation(JoinList.class);
+
+		if (includeList != null) {
+			for (JoinRule include : includeList.value()) {
+				includes.add(include);
+			}
+		}
+
+		return includes;
 	}
 
 	public boolean isFound() {
