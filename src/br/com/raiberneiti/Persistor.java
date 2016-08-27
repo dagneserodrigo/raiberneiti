@@ -38,7 +38,7 @@ public class Persistor {
 			
 			cmdSql.append("INSERT INTO " + tableName + " (");
 			
-			Field[] fields = tbl.getClass().getFields();
+			Field[] fields = tbl.getClass().getDeclaredFields();
 			Object[] values = new Object[ fields.length ];
 			ArrayList<Object[]> autoIncrements = null;
 			int counter = 0;
@@ -50,7 +50,7 @@ public class Persistor {
 					Object value = getFieldValue(field.getName());
 					
 					cmdSql.append( field.getName() + ", " );
-					parameters.append((value != null ? "?" : "null") + ", ");
+					parameters.append((value != null ? "? " : "null") + ", ");
 					
 					values[counter++] = value;
 				}

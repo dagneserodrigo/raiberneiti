@@ -74,6 +74,11 @@ public class Localizador <T extends Object> {
 			sql.append(field.getName());
 			sql.append(",");
 
+			if(!field.isAnnotationPresent(AlternateKey.class))
+			{
+				continue;
+			}
+			
 			boolean alternateKey = field.getAnnotation(AlternateKey.class).keyName().equals(alternateKeyName);
 
 			if (alternateKey) {
@@ -202,8 +207,8 @@ public class Localizador <T extends Object> {
 		try {
 			PreparedStatement statement = connection.getPreparedStatement(sql.toString());
 			
-			for (int i = 0; i > fields.length; i++) {
-				statement.setObject(i, fields[i]);
+			for (int i = 0; i < fields.length; i++) {
+				statement.setObject(i + 1, fields[i]);
 			}
 			
 			ResultSet result = statement.executeQuery();
@@ -211,11 +216,11 @@ public class Localizador <T extends Object> {
 			if (result.next()) {
 
 				while (!result.isAfterLast()) {
-					T register = c.newInstance();
+					registro = c.newInstance();
 
-					setRegistro(register, result);
+					setRegistro(registro, result);
 					
-					resultList.add(register);
+					resultList.add(registro);
 					result.next();
 				}
 			}
@@ -235,14 +240,15 @@ public class Localizador <T extends Object> {
 		try {
 			PreparedStatement statement = connection.getPreparedStatement(sql.toString());
 			
-			for (int i = 0; i > keys.length; i++) {
-				statement.setObject(i, keys[i]);
+			for (int i = 0; i < keys.length; i++) {
+				statement.setObject(i + 1, keys[i]);
 			}
 			
 			ResultSet result = statement.executeQuery();
 			
 			if (result.next()) {
-				setRegistro(c.newInstance(), result);
+				registro = c.newInstance();
+				setRegistro(registro, result);
 				found = true;
 			}
 
@@ -253,7 +259,7 @@ public class Localizador <T extends Object> {
 		}
 	}
 
-	private void setRegistro(T registro, ResultSet result) throws SQLException {
+	private void setRegistro(T registro, ResultSet result) throws SQLException, RaiberneitiException {
 		Field[] fields = c.getDeclaredFields();
 		int columnIndex = 1;
 		
@@ -266,20 +272,16 @@ public class Localizador <T extends Object> {
 				try {
 					Method method = registro.getClass().getDeclaredMethod(methodName, field.getType());
 					
-					try {
+					if (column.getClass().getSimpleName().equals("BigDecimal")) {
+						method.invoke(registro, ((BigDecimal) column).doubleValue()); 
+					} else if(column.getClass().getSimpleName().equals("Timestamp") && field.getType().getSimpleName().equals("Date")) {
+						method.invoke( registro, new Date(((Timestamp) column).getTime()));
+					} else {
 						method.invoke(registro, column);
-					
-					} catch(Exception e) {
-
-						if (column.getClass().getSimpleName().equals("BigDecimal")) {
-							method.invoke(registro, ((BigDecimal) column).doubleValue()); 
-						} else if(column.getClass().getSimpleName().equals("Timestamp") && field.getType().getSimpleName().equals("Date")) {
-							method.invoke( registro, new Date(((Timestamp) column).getTime()));
-						}
 					}
 
 				} catch(Exception e) {
-					e.printStackTrace();
+					throw new RaiberneitiException(e);
 				}
 			}
 		}
