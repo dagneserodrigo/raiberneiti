@@ -152,7 +152,7 @@ public class Localizador <T extends Object> {
 		sql.delete(sql.length() - 1, sql.length());
 
 		Table tableName = c.getAnnotation(Table.class);
-		sql.append("FROM");
+		sql.append(" FROM ");
 
 		if (tableName != null) {
 			sql.append(tableName.name());
